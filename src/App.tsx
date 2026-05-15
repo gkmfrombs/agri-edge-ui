@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Wifi, Menu, ChevronLeft, Sprout, AlertTriangle, MessageSquare, CloudRain, TrendingDown } from 'lucide-react';
-import { LineChart, Line, BarChart, Bar, XAxis, Tooltip, ResponsiveContainer, YAxis } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import Chat from './components/Chat';
 
 // Mock Data for the Analytics
