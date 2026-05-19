@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from '../../node_modules/react-i18next'
 import { useAuth } from '../components/AuthContext'
 import { IUser, IBarChart, ICheck, WheatStalk } from '../components/Shared'

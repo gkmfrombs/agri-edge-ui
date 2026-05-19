@@ -1,5 +1,5 @@
-﻿import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+﻿import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useTranslation } from '../../node_modules/react-i18next';
 import { IChev, IMic, ICheck, TopStrip, BottomNav } from '../components/Shared';
 
@@ -8,7 +8,7 @@ const products = ['Topik 15 WP', 'Score 250 EC', 'Actara 25 WG', 'Kavach 75 WP',
 
 export default function LogVisit() {
     const { t } = useTranslation();
-    const navigate = useNavigate();
+    // const navigate = useNavigate();
     const [selectedOutcome, setSelectedOutcome] = useState<string | null>(null);
     const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
     const [competitor, setCompetitor] = useState(false);
