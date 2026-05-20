@@ -1,9 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { Link } from 'react-router-dom'
-import { useTranslation } from '../../node_modules/react-i18next'
+import { Link, useLocation } from 'react-router-dom'
+import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { IChev, IMic, ISend, IClose, Icon } from '../components/Shared'
+import { useAuth } from '../components/AuthContext'
 
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -160,8 +161,22 @@ interface Message {
   followUps?: string[]
 }
 
-const initialMessages: Message[] = [
-  { text: "Hello! I am AgroPilot. How can I help you manage your territory today?", isUser: false },
+const buildInitialMessages = (name: string): Message[] => [
+  { text: `Good morning ${name || 'there'}! I've already analysed your territory. 3 farms need attention before the rain hits Thursday.`, isUser: false },
+  { text: 'What should I prioritize before the rain hits today?', isUser: true },
+  {
+    text: 'Apply Syngenta Tilt 25EC within 48 hours',
+    isUser: false,
+    bullets: [
+      'HD-2967 wheat at BBCH 65 (flowering) — peak fungal vulnerability window',
+      '48mm rainfall + 89% humidity over 31h matched Septoria infection conditions (Hardoi IMD)',
+      '0.87 cosine match to May 2023 outbreak — 14 plots, 12–22% yield loss in Bhatpura-Mallawan cluster',
+      '14 units Tilt 25EC at Kisan Store, Sandila Rd — 11 min drive, confirmed 2h ago',
+    ],
+    confidence: 94,
+    showSources: true,
+    followUps: ['What dosage?', 'Check stock', 'Show route'],
+  },
 ]
 
 // Mini waveform for voice messages
@@ -213,7 +228,7 @@ const iconRoundBtn: React.CSSProperties = {
 }
 
 function AIMessageCard({ message }: { message: Message }) {
-  const headline = message.bullets ? 'Apply Syngenta Tilt 25EC within 48 hours' : message.text
+  const headline = message.text
   const [typed, done] = useTypewriter(message.bullets ? headline : '', 28, 200)
   const [bulletStep, setBulletStep] = useState(0)
   const [feedback, setFeedback] = useState<'up' | 'dn' | null>(null)
@@ -389,7 +404,9 @@ function ChatMessage({ message, delay, onSend }: { message: Message; delay: numb
 
 export default function AIConsultant() {
   const { t } = useTranslation()
-  const [messages, setMessages] = useState<Message[]>(initialMessages)
+  const { name } = useAuth()
+  const location = useLocation()
+  const [messages, setMessages] = useState<Message[]>(() => buildInitialMessages(name))
   const [input, setInput] = useState('')
   const [recording, setRecording] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -408,31 +425,72 @@ export default function AIConsultant() {
     return () => { abortRef.current?.abort() }
   }, [])
 
-  // Fetch real initial message on mount
+  // Auto-send prefilled question from crop scanner (or any other screen)
   useEffect(() => {
-    if (historyRef.current.length === 0) {
-      const repId = localStorage.getItem('agro_rep_id') || 'REP_0001'
-      const token = localStorage.getItem('agro_token')
-      
-      setMessages([{ text: '', isUser: false }]) // Set loading state for first message
-      
-      fetch(`${BASE}/api/chat/welcome/${repId}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
-      })
-        .then(res => res.json())
-        .then(data => {
-          if (data.message) {
-            setMessages([{ text: data.message, isUser: false, followUps: [data.suggested_prompt] }])
-            historyRef.current = [{ role: 'assistant', content: data.message }]
-          } else {
-            setMessages(initialMessages)
-          }
-        })
-        .catch(() => {
-          setMessages(initialMessages)
-        })
+    const prefill = (location.state as any)?.prefill
+    if (prefill) {
+      // Small delay so component fully mounts before sending
+      const t = setTimeout(() => sendMessage(prefill), 400)
+      return () => clearTimeout(t)
     }
   }, [])
+
+  // Parses LLM markdown response into structured card format.
+  // Very permissive — tries hard to extract structure, falls back to markdown only if nothing found.
+  const parseStructuredResponse = (raw: string): Partial<Message> => {
+    const lines = raw.split('\n')
+
+    // Extract any markdown heading (##, #, ###)
+    const headingLine = lines.find(l => /^#{1,3}\s+/.test(l))
+    const title = headingLine ? headingLine.replace(/^#{1,3}\s+/, '').trim() : null
+
+    // Extract first bold line that looks like a recommendation (skip "Confidence:" line)
+    const boldMatches = [...raw.matchAll(/\*\*([^*\n]{10,160})\*\*/g)]
+    const headline = boldMatches
+      .map(m => m[1].trim())
+      .find(t => !t.startsWith('Confidence') && !t.startsWith('ROI') && !t.startsWith('Product'))
+      || null
+
+    // Extract bullets — support "- ", "* ", "• ", and numbered "1. " lists
+    const bulletLines = lines
+      .filter(l => /^(\s*[-*•]\s+|\s*\d+\.\s+)/.test(l))
+      .map(l => l.replace(/^(\s*[-*•]\s+|\s*\d+\.\s+)/, '').trim())
+      .filter(b => b.length > 5)
+
+    // Extract confidence score
+    const confMatch = raw.match(/Confidence:\s*(\d+)%/i)
+    const confidence = confMatch ? parseInt(confMatch[1]) : undefined
+
+    // Extract product name
+    const metaMatch = raw.match(/Product:\s*([^·\n\*]+)/i)
+    const product = metaMatch ? metaMatch[1].trim() : null
+
+    // Extract ROI blockquote
+    const roiMatch = raw.match(/>\s*\*{0,2}ROI[^:]*:\*{0,2}\s*(.+)/i)
+    const roi = roiMatch ? roiMatch[1].trim() : null
+
+    // Build card if we have a title OR at least 2 bullets
+    if (title || bulletLines.length >= 2) {
+      const extraBullets = [
+        product && !bulletLines.some(b => b.toLowerCase().includes('product')) ? `Product: ${product}` : null,
+        roi && !bulletLines.some(b => b.toLowerCase().includes('roi')) ? `ROI: ${roi}` : null,
+      ].filter(Boolean) as string[]
+
+      return {
+        text: headline || title || 'AgroPilot Recommendation',
+        bullets: [...bulletLines, ...extraBullets].slice(0, 8),
+        confidence,
+        showSources: true,
+        followUps: ['What dosage?', 'Check stock', 'Show reasoning graph'],
+      }
+    }
+
+    // True fallback — plain markdown (should rarely hit this)
+    return {
+      text: raw || 'Got it.',
+      followUps: ['What dosage?', 'Check stock', 'Show route'],
+    }
+  }
 
   const sendMessage = async (text?: string) => {
     const userMsg = (text ?? input).trim()
@@ -513,14 +571,13 @@ export default function AIConsultant() {
         }
       }
 
-      // Stream finished — attach follow-ups and persist to history
+      // Stream finished — parse structured markdown into card format
       historyRef.current = [...historyRef.current, { role: 'assistant', content: accumulated }]
+
+      const parsed = parseStructuredResponse(accumulated)
       setMessages(prev => {
         const next = [...prev]
-        next[next.length - 1] = {
-          text: accumulated || 'Got it.',
-          isUser: false,
-        }
+        next[next.length - 1] = { ...parsed, isUser: false }
         return next
       })
     } catch (err) {
@@ -541,8 +598,8 @@ export default function AIConsultant() {
     }
   }
 
-  // Context chips for current visit (can be populated dynamically later)
-  const contextChips: string[] = []
+  // Context chips for current visit
+  const contextChips = ['Wheat', 'Block 4', 'Flowering', 'Cached ✓']
 
   return (
     <div className="chat-screen">
@@ -566,18 +623,16 @@ export default function AIConsultant() {
       </div>
 
       {/* Context chips */}
-      {contextChips.length > 0 && (
-        <div style={{ padding: '10px 18px', background: 'var(--surface-warm)', borderBottom: '1px solid var(--border)' }}>
-          <div className="no-scrollbar" style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
-            {contextChips.map(c => (
-              <span key={c} style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 999, background: 'var(--bg)', border: '1px solid var(--border)', fontFamily: 'Plus Jakarta Sans', fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)' }}>
-                {c === 'Cached ✓' && <span style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--accent)' }} />}
-                {c}
-              </span>
-            ))}
-          </div>
+      <div style={{ padding: '10px 18px', background: 'var(--surface-warm)', borderBottom: '1px solid var(--border)' }}>
+        <div className="no-scrollbar" style={{ display: 'flex', gap: 8, overflowX: 'auto' }}>
+          {contextChips.map(c => (
+            <span key={c} style={{ flex: 'none', display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px', borderRadius: 999, background: 'var(--bg)', border: '1px solid var(--border)', fontFamily: 'Plus Jakarta Sans', fontSize: 11.5, fontWeight: 600, color: 'var(--ink-soft)' }}>
+              {c === 'Cached ✓' && <span style={{ width: 5, height: 5, borderRadius: 99, background: 'var(--accent)' }} />}
+              {c}
+            </span>
+          ))}
         </div>
-      )}
+      </div>
 
       {/* Messages */}
       <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '18px 18px 8px', display: 'flex', flexDirection: 'column' }} className="no-scrollbar">

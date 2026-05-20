@@ -1,7 +1,8 @@
-﻿import { useState } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { PulseDot, IBell, TopStrip, BottomNav, VoiceFAB, IChev, IAlertTriangle, ICloudRain, Icon } from '../components/Shared';
+import { PulseDot, TopStrip, BottomNav, VoiceFAB, IChev, IAlertTriangle, ICloudRain, Icon } from '../components/Shared';
+import { api } from '../services/api';
 
 const IBox = (p: any) => <Icon {...p} d={<><path d="M21 8 12 13 3 8" /><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z" /><path d="M12 13v9" /></>} />;
 const ITrend = (p: any) => <Icon {...p} d={<><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></>} />;
@@ -9,7 +10,7 @@ const IFire = (p: any) => <Icon {...p} d={<path d="M8.5 14.5A2.5 2.5 0 0 0 11 12
 const IShield = (p: any) => <Icon {...p} d={<><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></>} />;
 const IScan = (p: any) => <Icon {...p} d={<><path d="M3 7V5a2 2 0 0 1 2-2h2" /><path d="M17 3h2a2 2 0 0 1 2 2v2" /><path d="M21 17v2a2 2 0 0 1-2 2h-2" /><path d="M7 21H5a2 2 0 0 1-2-2v-2" /><line x1="7" y1="12" x2="17" y2="12" /></>} />;
 
-const ALERT_ICONS: Record<string, (p: any) => React.ReactNode> = {
+const ALERT_ICONS: Record<string, (p: any) => JSX.Element> = {
     stockout: IBox,
     demand: ITrend,
     campaign: IFire,
@@ -37,12 +38,26 @@ const RISK: any = {
 export default function AlertsFeed() {
     const { t } = useTranslation();
     const [activeTabIdx, setActiveTabIdx] = useState(0);
+    const [liveAlerts, setLiveAlerts] = useState(alerts);
 
-    const filtered = activeTabIdx === 0 ? alerts :
-        activeTabIdx === 1 ? alerts.filter(a => a.severity === 'HIGH') :
-            activeTabIdx === 2 ? alerts.filter(a => ['demand', 'scan'].includes(a.type)) :
-                activeTabIdx === 3 ? alerts.filter(a => a.type === 'campaign') :
-                    alerts.filter(a => a.type === 'competitor');
+    useEffect(() => {
+        api.getAlerts().then((data: any) => {
+            if (data?.alerts?.length) setLiveAlerts(data.alerts.map((a: any) => ({
+                id: a.alert_id || a.id,
+                type: a.alert_type || a.type || 'stockout',
+                title: a.title,
+                desc: a.description || a.action || '',
+                time: a.created_at ? new Date(a.created_at).toLocaleDateString() : 'recent',
+                severity: (a.severity || 'LOW').toUpperCase(),
+            })));
+        }).catch(() => null);
+    }, []);
+
+    const filtered = activeTabIdx === 0 ? liveAlerts :
+        activeTabIdx === 1 ? liveAlerts.filter((a: any) => a.severity === 'HIGH') :
+        activeTabIdx === 2 ? liveAlerts.filter((a: any) => ['demand', 'scan'].includes(a.type)) :
+        activeTabIdx === 3 ? liveAlerts.filter((a: any) => a.type === 'campaign') :
+        liveAlerts.filter((a: any) => a.type === 'competitor');
 
     return (
         <div className="screen-root" style={{ position: 'relative', width: '100%', minHeight: '100%', background: 'var(--bg)' }}>
